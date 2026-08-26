@@ -115,16 +115,14 @@ Duas entregas separadas, exigidas pelas disciplinas de Machine Learning e Deep L
 
 ## 📁 Estrutura do Repositório
 
-> ⚠️ **A confirmar:** o `utils.py` e o notebook do Desafio 3 (CatBoost) não apareceram na pasta visualizada mais recentemente — confirmar se estão em outro local do repositório ou se ainda faltam subir. Os nomes abaixo refletem exatamente os arquivos já existentes na pasta principal.
-
 ```
 .
-├── utils.py                                            # [confirmar localização] Módulo central do projeto + Sprints
+├── utils.py                                            # Módulo central do projeto + Sprints (import confirmado no notebook do CatBoost)
 ├── Projeto_Chronos_Locaweb_01_bronze_ingestao.ipynb
 ├── Projeto_Chronos_Locaweb_02_silver_limpeza.ipynb
 ├── Projeto_Chronos_Locaweb_03_gold_features.ipynb
 ├── Projeto_Chronos_Locaweb_04_Sarimax.ipynb
-├── Projeto_Chronos_Locaweb_05_catboost.ipynb           # [confirmar nome real] Desafio 3
+├── Projeto_Chronos_Locaweb_05_Catboost.ipynb
 ├── Projeto_Chronos_Locaweb_EDA_Completa.ipynb
 ├── Projeto_Chronos_Locaweb_EDA_Complementar.ipynb
 ├── Projeto_Chronos_Locaweb_Sprint_3_Chronos_ML.ipynb   # Sprint acadêmica — regressão logística interpretável
@@ -140,7 +138,8 @@ Duas entregas separadas, exigidas pelas disciplinas de Machine Learning e Deep L
 ## 🔮 Próximos Passos
 
 - [ ] **Desafio 4 — Explicabilidade (SHAP):** aprofundar a explicabilidade do modelo de risco através da extração dos valores SHAP, traduzindo o impacto marginal das *top features* em *insights* de negócio acionáveis para a operação da Locaweb.
-- [ ] **Persistência dos modelos de produção em disco** (`.cbm` para CatBoost, `.joblib` para SARIMAX/regressão logística, `.keras` para a ANN) — necessário para a disciplina de Cloud Solutions empacotar um artefato real em container.
+- [x] **Persistência do modelo CatBoost em disco** (`.cbm`, via `salvar_modelo_catboost`) — feito.
+- [ ] **Persistência dos demais modelos de produção em disco** (`.joblib` para SARIMAX/regressão logística, `.keras` para a ANN) — necessário para a disciplina de Cloud Solutions empacotar um artefato real em container.
 - [ ] **Ensemble dos modelos de fold do CatBoost**, para reduzir a variância de desempenho observada entre os 3 *folds* de validação.
 - [ ] **Intervalo de confiança por *bootstrap* no Precision@K**, hoje reportado como número pontual.
 - [ ] **Estatística descritiva consolidada** do projeto.
