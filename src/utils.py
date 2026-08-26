@@ -1377,6 +1377,136 @@ def calibrar_threshold_por_custo(
 
 
 # =====================================================================
+# 16. PERSISTÊNCIA DE MODELOS DE PRODUÇÃO — sem isso não existe artefato
+# =====================================================================
+# Motivação: até esta versão, `modelo_producao` (SARIMAX, CatBoost, a
+# regressão logística e a ANN) vivia só em memória durante a execução do
+# notebook — sem nenhum `save_model`/`joblib.dump`/`pickle.dump` em
+# nenhum lugar do projeto. Isso significa que a disciplina de Cloud
+# Solutions, que precisa empacotar um modelo real num container, não
+# tinha nenhum arquivo pra consumir. As funções abaixo geram esse
+# artefato — uma por família de modelo, porque o formato nativo de cada
+# biblioteca é mais estável a longo prazo do que forçar tudo pelo
+# `pickle` genérico (o CatBoost, em especial, alerta que modelos salvos
+# por `pickle` podem não abrir em outra versão da biblioteca).
+
+def salvar_modelo_catboost(modelo, caminho: "Path | str") -> "Path":
+    """Salva um CatBoostClassifier no formato nativo (`.cbm`) — o mais
+    estável entre versões da biblioteca, e o que o próprio CatBoost
+    recomenda para produção (mais do que `pickle`).
+    """
+    caminho = Path(caminho)
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    modelo.save_model(str(caminho))
+    return caminho
+
+
+def carregar_modelo_catboost(caminho: "Path | str"):
+    """Carrega um CatBoostClassifier salvo por `salvar_modelo_catboost`."""
+    from catboost import CatBoostClassifier
+
+    modelo = CatBoostClassifier()
+    modelo.load_model(str(caminho))
+    return modelo
+
+
+def salvar_modelo_keras(modelo, caminho: "Path | str") -> "Path":
+    """Salva um modelo Keras (ANN) no formato nativo `.keras`."""
+    caminho = Path(caminho)
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    modelo.save(str(caminho))
+    return caminho
+
+
+def carregar_modelo_keras(caminho: "Path | str"):
+    """Carrega um modelo Keras salvo por `salvar_modelo_keras`."""
+    from tensorflow import keras
+
+    return keras.models.load_model(str(caminho))
+
+
+def salvar_artefato(objeto, caminho: "Path | str") -> "Path":
+    """Salva, via `joblib`, qualquer objeto Python serializável desse
+    jeito — o caminho genérico para modelos `pmdarima`/`statsmodels`
+    (SARIMAX), `sklearn` (regressão logística) e os `encoder`/`scaler`
+    que qualquer modelo baseado em `preparar_features_sklearn` precisa
+    para transformar um dado novo do mesmo jeito que transformou o
+    treino (sem o `encoder`/`scaler` salvos junto, o modelo sozinho é
+    inútil em produção — ele não sabe reproduzir sua própria entrada).
+    """
+    import joblib
+
+    caminho = Path(caminho)
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(objeto, caminho)
+    return caminho
+
+
+def carregar_artefato(caminho: "Path | str"):
+    """Carrega um artefato salvo por `salvar_artefato`."""
+    import joblib
+
+    return joblib.load(caminho)
+
+
+def gerar_contrato_dados(
+    df: pd.DataFrame,
+    nome_tabela: str,
+    caminho_saida: "Path | str | None" = None,
+    descricoes_colunas: dict | None = None,
+) -> pd.DataFrame:
+    """Gera um "contrato de dados" — uma tabela de referência com
+    coluna, tipo, % de nulos, cardinalidade e um valor de exemplo — para
+    QUALQUER tabela do pipeline (Bronze, Silver, ou cada tabela da
+    Gold). Pensado para ser rodado ao final de cada camada e
+    compartilhado com o time (dashboard, Cloud Solutions, qualquer
+    consumidor externo ao notebook que precise saber "o que essa tabela
+    contém" sem ler o notebook inteiro.
+
+    `descricoes_colunas`, se fornecido, é um dicionário {coluna:
+    descrição} — as colunas sem entrada ficam com descrição vazia,
+    sinalizando explicitamise o que ainda falta documentar, em vez de
+    inventar uma descrição genérica.
+
+    Se `caminho_saida` for fornecido, grava também uma versão em
+    Markdown (fácil de colar num README ou compartilhar sem exigir
+    Excel/pandas de quem for ler).
+    """
+    descricoes_colunas = descricoes_colunas or {}
+
+    contrato = pd.DataFrame({
+        "coluna": df.columns,
+        "tipo": [str(t) for t in df.dtypes],
+        "pct_nulos": [round(df[c].isna().mean() * 100, 2) for c in df.columns],
+        "n_unicos": [df[c].nunique(dropna=True) for c in df.columns],
+        "exemplo": [
+            (df[c].dropna().iloc[0] if df[c].notna().any() else None)
+            for c in df.columns
+        ],
+        "descricao": [descricoes_colunas.get(c, "") for c in df.columns],
+    })
+
+    if caminho_saida is not None:
+        caminho_saida = Path(caminho_saida)
+        caminho_saida.parent.mkdir(parents=True, exist_ok=True)
+        linhas_md = [
+            f"# Contrato de dados — {nome_tabela}",
+            "",
+            f"Gerado em {datetime.now(timezone.utc).isoformat()} | {len(df):,} linhas x {len(df.columns)} colunas".replace(",", "."),
+            "",
+            "| Coluna | Tipo | % Nulos | Nº Únicos | Exemplo | Descrição |",
+            "|---|---|---|---|---|---|",
+        ]
+        for _, linha in contrato.iterrows():
+            linhas_md.append(
+                f"| {linha['coluna']} | {linha['tipo']} | {linha['pct_nulos']}% | {linha['n_unicos']} | {linha['exemplo']} | {linha['descricao']} |"
+            )
+        caminho_saida.write_text("\n".join(linhas_md), encoding="utf-8")
+
+    return contrato
+
+
+# =====================================================================
 # =====================================================================
 # ############   FIM DO ESCOPO DO PROJETO — A PARTIR DAQUI É SPRINT   ############
 # =====================================================================
