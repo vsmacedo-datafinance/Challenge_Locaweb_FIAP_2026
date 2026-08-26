@@ -37,7 +37,7 @@ A pipeline de dados foi desenhada com **tolerância zero a *data leakage*** (vaz
 
 ## 🏗️ Arquitetura de Dados (Pipeline)
 
-Adotamos a Arquitetura Medalhão para garantir governança, reprodutibilidade e isolamento de regras de negócio. Todo o "encanamento" (hashing, logging, I/O, validação) está centralizado em um único módulo `utils.py`, respeitando o princípio de responsabilidade única.
+Adotamos a Arquitetura Medalhão para garantir governança, reprodutibilidade e isolamento de regras de negócio. Todo o "encanamento" (hashing, logging, I/O, validação, persistência de modelo) está centralizado em um único módulo `utils.py`, respeitando o princípio de responsabilidade única — com uma divisória explícita separando as funções do projeto principal das funções exclusivas das Sprints acadêmicas de ML/DL.
 
 ### 🥉 Camada Bronze (Ingestão & Auditoria)
 
@@ -59,10 +59,10 @@ Aplicação de regras de negócio embasadas por testes de hipóteses estatístic
 
 ### 🥇 Camada Gold (Feature Store & Model Readiness)
 
-Desenho de *features* focado em evitar vazamento temporal (*look-ahead bias*), com três tabelas de consumo isoladas, uma por desafio:
+Desenho de *features* focado em evitar vazamento temporal (*look-ahead bias*), com três tabelas de consumo isoladas, uma por desafio — e um contrato de dados (`CONTRATO_DADOS_*.md`) gerado automaticamente para cada uma, documentando coluna, tipo, % de nulos e cardinalidade, pronto para compartilhar com o time sem precisar abrir o notebook.
 
 1. **`gold_volume_diario`** (Desafio 1) — agregação temporal (365 dias de 2025), variáveis cíclicas (seno/cosseno) e *lags* operativos (t-1 a t-7), para modelagem **SARIMAX**.
-2. **`gold_tendencias_macro`** (Desafio 2) — agregação semanal sumarizando volumetria, cobertura de categorias e mediana de duração, para diagnóstico e relatórios de BI.
+2. **`gold_tendencias_macro`** (Desafio 2) — agregação semanal sumarizando volumetria, cobertura de categorias e mediana de duração, para diagnóstico e relatórios de BI. Exportada também em CSV (`exports_dashboard/`) para consumo direto em Power BI/Tableau.
 3. **`gold_chamados_risco`** (Desafios 3 e 4) — matriz granular de predição (121.811 chamados) pronta para o **CatBoost**, com exclusão cirúrgica de variáveis pós-evento (`Resolvido`, `Código de fechamento`, `Status`, `Duração` etc.).
 
 ---
@@ -76,19 +76,21 @@ Desenho de *features* focado em evitar vazamento temporal (*look-ahead bias*), c
 * **Incerteza por bootstrap:** a curtose encontrada nos resíduos (muito acima de 3) indicava caudas pesadas, invalidando a premissa gaussiana clássica — substituímos o intervalo de confiança padrão por um **intervalo de previsão por *bootstrap* dos resíduos**.
 * **Correção de viés de Duan:** confirmamos empiricamente, nos 3 *folds*, que reverter transformações logarítmicas com `expm1` ingênuo subestima sistematicamente a previsão quando a variância é alta — a correção de Duan foi usada em todas as comparações de escala.
 * **Teste de parcimônia (BIC):** o Critério de Informação Bayesiano penalizou complexidade desnecessária — os coeficientes de Fourier foram removidos após confirmar estatisticamente que não eram significativos (p = 0,81 e p = 0,98).
+* **Investigação de anomalias:** 7 saltos de volume identificados por variação diária extrema; 2 deles correlacionam fortemente com incidentes em massa (46-51% dos chamados do dia vinculados via `tem_incidente_pai`) — tratados como evento operacional real, não falha de modelo.
 
 ### 2. Probabilidade e associação categórica (Desafios 2 e 3)
 
 * **Kruskal-Wallis para mistura de populações:** confirmamos (H = 50.053,42, p ≈ 0) que `Duração` é, na verdade, uma mistura de distribuições distintas condicionadas ao modo de fechamento (`Status`) — invalida o uso de métricas de tendência central genéricas sobre essa variável.
 * **Associação categórica:** uso do V de Cramér para medir a força de associação entre variáveis de alta cardinalidade e o alvo (`Grupo designado` foi a associação individual mais forte encontrada).
 * **Guardrails de variância (*cold start*):** criação da *flag* `grupo_baixo_volume`, para sinalizar equipes/filas com amostragem insuficiente (n < 100) e evitar leitura enganosa de risco baseada em pouca informação.
+* **Separação quase-completa:** identificada e resolvida na Sprint de ML — com ~17 equipes dividindo menos de 1% de positivos, o ajuste clássico de regressão logística falha numericamente para equipes sem nenhum caso positivo; resolvido com uma cascata de 3 níveis (ajuste clássico → regularização L2 → *bootstrap*).
 * **Ordered Target Statistics:** em vez de um *target encoding* tradicional (que gera vazamento), apoiamo-nos no processamento nativo do CatBoost, que calcula a estatística da variável-alvo respeitando a ordem temporal, sempre dentro do fold de treino.
 
 ---
 
 ## 🚀 Resultados da Modelagem
 
-Os modelos preditivos foram otimizados com **Optuna** e validados com **Walk-Forward Validation** em janela expansiva (3 *folds* temporais estritos, sem nenhum vazamento de dado futuro).
+Os modelos preditivos foram otimizados com **Optuna** e validados com **Walk-Forward Validation** em janela expansiva (3 *folds* temporais estritos, sem nenhum vazamento de dado futuro) — os mesmos 3 *folds* em todos os modelos, para comparabilidade direta.
 
 ### ✅ Desafio 1 — Previsão de Volume (SARIMAX)
 
@@ -102,27 +104,37 @@ Os modelos preditivos foram otimizados com **Optuna** e validados com **Walk-For
 * **Threshold de decisão:** calibrado com uma matriz de custo **ilustrativa** de 1:15 (custo de deixar passar uma violação real vs. custo de uma verificação redundante) — usada para demonstrar o mecanismo de calibração, não como um valor real de negócio. O time ainda não forneceu os custos reais de falso positivo/falso negativo; quando isso acontecer, a mesma função já está pronta para recalibrar.
 * **Top *features*:** as variáveis de maior peso identificadas foram a descrição do chamado (`descricao_limpa`, ~29% de importância), a pressão operacional da fila nos últimos 7 dias (`pressao_fila_7d`) e o histórico de problemas do ativo de infraestrutura (`ic_contagem_historica`).
 
+### 📎 Sprints Acadêmicas (ML e DL)
+
+Duas entregas separadas, exigidas pelas disciplinas de Machine Learning e Deep Learning da FIAP — mesmo alvo do Desafio 3, mas com foco em interpretabilidade (ML) e viabilidade técnica de MVP (DL), não em superar o CatBoost:
+
+* **ML — Regressão Logística:** PR-AUC médio 0,041 (ROC-AUC 0,794, quase empatado com o CatBoost — evidência direta de por que PR-AUC, não ROC-AUC, é a métrica primária do projeto).
+* **DL — ANN:** PR-AUC 0,0995 no fold 3 (com investigação de clusterização de texto via TF-IDF+K-Means, que quase dobrou o PR-AUC com uma troca de ROC-AUC) — inclui MVP funcional local (`prever_risco_chamado`).
+
 ---
 
 ## 📁 Estrutura do Repositório
 
+> ⚠️ **A confirmar:** o `utils.py` e o notebook do Desafio 3 (CatBoost) não apareceram na pasta visualizada mais recentemente — confirmar se estão em outro local do repositório ou se ainda faltam subir. Os nomes abaixo refletem exatamente os arquivos já existentes na pasta principal.
+>
+> ⚠️ **Inconsistência de nome a revisar:** a maioria dos arquivos usa o prefixo `Projeto_Chronos_Locaweb_` (com **h**), mas os dois notebooks de Sprint usam `Cronos` (sem **h**) no meio do nome. Não corrigimos isso automaticamente — confirme com o grupo qual é o padrão oficial antes de padronizar.
+
 ```
 .
-├── utils.py                              # Módulo central (projeto + seção de Sprints acadêmicas, separadas por divisória)
-├── notebooks/
-│   ├── 01_bronze_ingestao.ipynb
-│   ├── 02_silver_limpeza_texto.ipynb
-│   ├── 03_gold_features.ipynb
-│   ├── 04_desafio1_sarimax.ipynb
-│   ├── 05_desafio3_catboost.ipynb
-│   ├── EC_Sprint_3_Cronos_ML.ipynb        # Sprint acadêmica — regressão logística interpretável
-│   └── EC_Sprint_3_Cronos_DeepL.ipynb     # Sprint acadêmica — ANN + investigação de clusterização
+├── utils.py                                            # [confirmar localização] Módulo central do projeto + Sprints
+├── Projeto_Chronos_Locaweb_01_bronze_ingestao.ipynb
+├── Projeto_Chronos_Locaweb_02_silver_limpeza.ipynb
+├── Projeto_Chronos_Locaweb_03_gold_features.ipynb
+├── Projeto_Chronos_Locaweb_04_Sarimax.ipynb
+├── Projeto_Chronos_Locaweb_05_catboost.ipynb           # [confirmar nome real] Desafio 3
+├── Projeto_Chronos_Locaweb_EDA_Completa.ipynb
+├── Projeto_Chronos_Locaweb_EDA_Complementar.ipynb
+├── Projeto_Chronos_Locaweb_Sprint_3_Cronos_ML.ipynb    # Sprint acadêmica — regressão logística interpretável
+├── Projeto_Chronos_Locaweb_Sprint_3_Cronos_DL.ipynb    # Sprint acadêmica — ANN + investigação de clusterização
 ├── tests/
-│   └── test_utils.py                      # Suíte de testes das funções de utils.py
+│   └── test_utils.py                                   # Suíte de testes das funções de utils.py
 └── docs/
-    ├── EDA_Completa_Locaweb_Cronos.ipynb
-    ├── EDA_Complementar_Locaweb_Cronos.ipynb
-    └── projeto_cronos_documento_completo.docx  # Documento de referência completo do projeto
+    └── projeto_cronos_documento_completo.docx          # Documento de referência completo do projeto
 ```
 
 ---
@@ -130,6 +142,7 @@ Os modelos preditivos foram otimizados com **Optuna** e validados com **Walk-For
 ## 🔮 Próximos Passos
 
 - [ ] **Desafio 4 — Explicabilidade (SHAP):** aprofundar a explicabilidade do modelo de risco através da extração dos valores SHAP, traduzindo o impacto marginal das *top features* em *insights* de negócio acionáveis para a operação da Locaweb.
+- [ ] **Persistência dos modelos de produção em disco** (`.cbm` para CatBoost, `.joblib` para SARIMAX/regressão logística, `.keras` para a ANN) — necessário para a disciplina de Cloud Solutions empacotar um artefato real em container.
 - [ ] **Ensemble dos modelos de fold do CatBoost**, para reduzir a variância de desempenho observada entre os 3 *folds* de validação.
 - [ ] **Intervalo de confiança por *bootstrap* no Precision@K**, hoje reportado como número pontual.
 - [ ] **Estatística descritiva consolidada** do projeto.
