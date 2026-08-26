@@ -127,10 +127,7 @@ Duas entregas separadas, exigidas pelas disciplinas de Machine Learning e Deep L
 ├── Projeto_Chronos_Locaweb_EDA_Complementar.ipynb
 ├── Projeto_Chronos_Locaweb_Sprint_3_Chronos_ML.ipynb   # Sprint acadêmica — regressão logística interpretável
 ├── Projeto_Chronos_Locaweb_Sprint_3_Chronos_DL.ipynb   # Sprint acadêmica — ANN + investigação de clusterização
-├── tests/
-│   └── test_utils.py                                   # Suíte de testes das funções de utils.py
-└── docs/
-    └── projeto_cronos_documento_completo.docx          # Documento de referência completo do projeto
+
 ```
 
 ---
