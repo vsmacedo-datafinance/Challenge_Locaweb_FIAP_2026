@@ -1,11 +1,11 @@
-# 🕰️ Projeto Cronos | Locaweb Challenge 2026
+# 🕰️ Projeto Chronos | Locaweb Challenge 2026
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue?style=for-the-badge&logo=python)
 ![Pandas](https://img.shields.io/badge/Pandas-Data_Engineering-150458?style=for-the-badge&logo=pandas)
 ![Estatística](https://img.shields.io/badge/Stats-Econometrics-brightgreen?style=for-the-badge)
 ![Arquitetura](https://img.shields.io/badge/Architecture-Medallion-FFD700?style=for-the-badge)
 
-**Repositório oficial do Projeto Cronos, desenvolvido para o Challenge Locaweb 2026 (FIAP).**
+**Repositório oficial do Projeto Chronos, desenvolvido para o Challenge Locaweb 2026 (FIAP).**
 
 ## 👥 Equipe
 
@@ -29,7 +29,7 @@
 
 ## 🎯 Resumo Executivo
 
-O Projeto Cronos visa otimizar a gestão de incidentes da Locaweb através de inteligência de dados. Nossa abordagem foge do padrão de notebooks monolíticos e adota uma **Arquitetura Medalhão (Medallion Pattern)** robusta, suportada por princípios de Engenharia de Dados (rastreabilidade, logs estruturados, testes automatizados) e um forte rigor econométrico na fase de Análise Exploratória (EDA).
+O Projeto Chronos visa otimizar a gestão de incidentes da Locaweb através de inteligência de dados. Nossa abordagem foge do padrão de notebooks monolíticos e adota uma **Arquitetura Medalhão (Medallion Pattern)** robusta, suportada por princípios de Engenharia de Dados (rastreabilidade, logs estruturados, testes automatizados) e um forte rigor econométrico na fase de Análise Exploratória (EDA).
 
 A pipeline de dados foi desenhada com **tolerância zero a *data leakage*** (vazamento de dados — nenhuma coluna pós-evento entra como *feature*, nenhum encoding aprendido do alvo é calculado fora do fold de treino) e tratamento explícito para problemas de *cold start* (equipes/filas com pouquíssima amostragem).
 
@@ -116,8 +116,6 @@ Duas entregas separadas, exigidas pelas disciplinas de Machine Learning e Deep L
 ## 📁 Estrutura do Repositório
 
 > ⚠️ **A confirmar:** o `utils.py` e o notebook do Desafio 3 (CatBoost) não apareceram na pasta visualizada mais recentemente — confirmar se estão em outro local do repositório ou se ainda faltam subir. Os nomes abaixo refletem exatamente os arquivos já existentes na pasta principal.
->
-> ⚠️ **Inconsistência de nome a revisar:** a maioria dos arquivos usa o prefixo `Projeto_Chronos_Locaweb_` (com **h**), mas os dois notebooks de Sprint usam `Cronos` (sem **h**) no meio do nome. Não corrigimos isso automaticamente — confirme com o grupo qual é o padrão oficial antes de padronizar.
 
 ```
 .
@@ -129,8 +127,8 @@ Duas entregas separadas, exigidas pelas disciplinas de Machine Learning e Deep L
 ├── Projeto_Chronos_Locaweb_05_catboost.ipynb           # [confirmar nome real] Desafio 3
 ├── Projeto_Chronos_Locaweb_EDA_Completa.ipynb
 ├── Projeto_Chronos_Locaweb_EDA_Complementar.ipynb
-├── Projeto_Chronos_Locaweb_Sprint_3_Cronos_ML.ipynb    # Sprint acadêmica — regressão logística interpretável
-├── Projeto_Chronos_Locaweb_Sprint_3_Cronos_DL.ipynb    # Sprint acadêmica — ANN + investigação de clusterização
+├── Projeto_Chronos_Locaweb_Sprint_3_Chronos_ML.ipynb   # Sprint acadêmica — regressão logística interpretável
+├── Projeto_Chronos_Locaweb_Sprint_3_Chronos_DL.ipynb   # Sprint acadêmica — ANN + investigação de clusterização
 ├── tests/
 │   └── test_utils.py                                   # Suíte de testes das funções de utils.py
 └── docs/
