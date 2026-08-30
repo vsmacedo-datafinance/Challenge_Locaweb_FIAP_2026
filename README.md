@@ -7,6 +7,8 @@
 
 **Repositório oficial do Projeto Chronos, desenvolvido para o Challenge Locaweb 2026 (FIAP).**
 
+**Link repositório: https://github.com/vsmacedo-datafinance/Challenge_Locaweb_FIAP_2026** 
+
 ## 👥 Equipe
 
 * **Bruno Rosa** — RM563779
