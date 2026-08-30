@@ -45,7 +45,7 @@ Os notebooks foram desenhados para serem lidos nesta sequência — cada um depe
 3. **`Projeto_Chronos_Locaweb_EDA_Complementar.ipynb`** — segunda rodada, aprofunda/revisa achados da EDA Completa (inclusive corrigindo hipóteses iniciais).
 4. **`Projeto_Chronos_Locaweb_02_silver_limpeza.ipynb`** — limpeza e regras de negócio, cada uma com a evidência estatística das EDAs que a sustenta.
 5. **`Projeto_Chronos_Locaweb_03_gold_features_ajuste_incidente_pai.ipynb`** — camada de features, com a série de volume elegível/bruta separada e `tem_incidente_pai`/`incidente_pai_contagem_historica` removidas (regra oficial do Dicionário de Dados v2: incidente com pai preenchido não entra em KPI).
-6. **`Projeto_Chronos_Locaweb_Sprint_3_Cronos_ML.ipynb`** e **`Projeto_Chronos_Locaweb_Sprint_3_Cronos_DL.ipynb`** — entregas acadêmicas (regressão logística interpretável e ANN), mesma base da Gold.
+6. **`Projeto_Chronos_Locaweb_Sprint_3_ML.ipynb`** e **`Projeto_Chronos_Locaweb_Sprint_3_DL.ipynb`** — entregas acadêmicas (regressão logística interpretável e ANN), mesma base da Gold.
 7. **`Projeto_Chronos_Locaweb_04_Sarimax_.ipynb`** — Desafio 1 (previsão de volume), leia por último entre os desafios: consome a série elegível já validada na Gold.
 8. **`Projeto_Chronos_Locaweb_05_Catboost_.ipynb`** — Desafio 3 (risco de violação de SLA), fecha a sequência de modelagem.
 
@@ -153,8 +153,8 @@ Duas entregas separadas, exigidas pelas disciplinas de Machine Learning e Deep L
 │   ├── Projeto_Chronos_Locaweb_05_Catboost_.ipynb
 │   ├── Projeto_Chronos_Locaweb_EDA_Completa.ipynb
 │   ├── Projeto_Chronos_Locaweb_EDA_Complementar.ipynb
-│   ├── Projeto_Chronos_Locaweb_Sprint_3_Cronos_ML.ipynb    # Sprint acadêmica — regressão logística interpretável
-│   └── Projeto_Chronos_Locaweb_Sprint_3_Cronos_DL.ipynb    # Sprint acadêmica — ANN + investigação de clusterização
+│   ├── Projeto_Chronos_Locaweb_Sprint_3_ML.ipynb    # Sprint acadêmica — regressão logística interpretável
+│   └── Projeto_Chronos_Locaweb_Sprint_3_DL.ipynb    # Sprint acadêmica — ANN + investigação de clusterização
 ├── src/
 │   └── utils.py                                            # Módulo central do projeto + Sprints
 ├── .gitattributes
