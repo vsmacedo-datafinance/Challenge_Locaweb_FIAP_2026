@@ -1,5 +1,5 @@
 """
-utils.py — Projeto Cronos (Locaweb Challenge 2026)
+utils.py — Projeto Chronos (Locaweb Challenge 2026)
 Utilitários compartilhados entre as camadas Bronze / Silver / Gold e os
 notebooks de modelagem dos DESAFIOS OFICIAIS do challenge (Desafio 1 —
 SARIMAX, Desafio 3 — CatBoost, Desafio 4 — SHAP).
