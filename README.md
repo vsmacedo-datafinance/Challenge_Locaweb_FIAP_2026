@@ -49,8 +49,6 @@ Os notebooks foram desenhados para serem lidos nesta sequência — cada um depe
 7. **`Projeto_Chronos_Locaweb_04_Sarimax_.ipynb`** — Desafio 1 (previsão de volume), leia por último entre os desafios: consome a série elegível já validada na Gold.
 8. **`Projeto_Chronos_Locaweb_05_Catboost_.ipynb`** — Desafio 3 (risco de violação de SLA), fecha a sequência de modelagem.
 
-> ⚠️ **A confirmar:** os dois notebooks de Sprint aparecem com `Cronos` (sem H) no nome — o padrão combinado para o projeto inteiro é `Chronos` (com H). Confirma se é só digitação nesta lista ou se os arquivos reais no repositório também precisam ser renomeados.
-
 ---
 
 ## 🏗️ Arquitetura de Dados (Pipeline)
