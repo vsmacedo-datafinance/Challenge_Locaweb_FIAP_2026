@@ -168,7 +168,6 @@ Duas entregas separadas, exigidas pelas disciplinas de Machine Learning e Deep L
 ## 🔮 Próximos Passos
 
 - [ ] **Desafio 4 — Explicabilidade (SHAP):** aprofundar a explicabilidade do modelo de risco através da extração dos valores SHAP, traduzindo o impacto marginal das *top features* em *insights* de negócio acionáveis para a operação da Locaweb.
-- [ ] **Persistência dos demais modelos de produção em disco** (`.joblib` para a regressão logística, `.keras` para a ANN) — necessário para a disciplina de Cloud Solutions empacotar um artefato real em container.
 - [ ] **Ensemble dos modelos de fold do CatBoost**, para reduzir a variância de desempenho observada entre os 3 *folds* de validação.
 - [ ] **Intervalo de confiança por *bootstrap* no Precision@K**, hoje reportado como número pontual (instabilidade real já identificada: desvio-padrão maior que a média no Precision@10).
 - [ ] **Estatística descritiva consolidada** do projeto.
