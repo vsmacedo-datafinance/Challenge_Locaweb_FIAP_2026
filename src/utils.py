@@ -903,6 +903,16 @@ def rodar_variante_sarimax(
     previsao, ic = modelo.predict(n_periods=horizonte, X=X_teste, return_conf_int=True)
     previsao = np.asarray(previsao)  # nunca deixar como pd.Series — evita o bug de indexação [0] com DatetimeIndex
 
+    # Piso em zero: contagem de chamados nunca é negativa, mas o SARIMAX em escala bruta não
+    # tem esse limite embutido — sem isso, alguma previsão de teste eventualmente sai negativa
+    # (aconteceu de verdade num fold de baixa contagem). Aplicado aqui, na função de mais baixo
+    # nível, para que TODO consumidor (competição de variantes, teste de parcimônia, ensemble,
+    # escala, produção) herde a correção automaticamente — em vez de cada célula que usa o
+    # resultado ter que lembrar de aplicar o piso por conta própria.
+    previsao = np.maximum(previsao, 0)
+    ic = np.asarray(ic).copy()
+    ic[:, 0] = np.maximum(ic[:, 0], 0)
+
     return {
         "nome": nome, "modelo": modelo, "previsao": previsao, "ic": ic,
         "ordem": modelo.order, "ordem_sazonal": modelo.seasonal_order,
@@ -970,6 +980,32 @@ def monitorar_teto_contratual(previsao_periodo: float, teto_periodo: float | Non
         status = "OK"
     return {"previsao_periodo": previsao_periodo, "teto_periodo": teto_periodo,
             "pct_atingimento": round(pct_atingimento, 1), "status": status}
+
+
+# Faixas oficiais de metas anuais de KPI (Dicionário de Dados v2, Locaweb/FIAP) — únicas
+# prioridades com meta definida são 2-Alta e 3-Média. Cada tupla é
+# (limite_inferior, limite_superior, percentual_de_atingimento); None = sem limite nesse lado.
+FAIXAS_VOLUME_ANUAL_P2 = [(None, 4584, 150), (4585, 5388, 125), (5389, 6168, 100), (6169, 6252, 75), (6253, 6336, 50), (6337, None, 0)]
+FAIXAS_VOLUME_ANUAL_P3 = [(None, 19488, 150), (19489, 22116, 125), (22117, 22524, 100), (22525, 23892, 75), (23893, 24276, 50), (24277, None, 0)]
+FAIXAS_OLA_QUEBRADO_ANUAL_P2 = [(None, 30, 150), (31, 35, 125), (36, 39, 100), (40, 45, 75), (46, 53, 50), (54, None, 0)]
+FAIXAS_OLA_QUEBRADO_ANUAL_P3 = [(None, 200, 150), (201, 230, 125), (231, 263, 100), (264, 290, 75), (291, 320, 50), (321, None, 0)]
+
+
+def checar_faixa_kpi(valor: float, faixas: list) -> int | None:
+    """Confere um valor (ex.: volume anual projetado) contra as faixas
+    oficiais de % de atingimento do Dicionário de Dados v2 — cada faixa é
+    `(limite_inferior, limite_superior, percentual)`. Retorna o percentual
+    da faixa em que `valor` cai, ou `None` se não cair em nenhuma (não
+    deveria acontecer com as faixas oficiais, que cobrem toda a reta).
+
+    Reaproveitada tanto para checar o atingimento real (ex.: volume
+    elegível já fechado no ano) quanto para projetar um cenário futuro
+    (ex.: "se o ritmo do D+7 continuar, onde a gente aterrissa no ano?").
+    """
+    for limite_inf, limite_sup, pct in faixas:
+        if (limite_inf is None or valor >= limite_inf) and (limite_sup is None or valor <= limite_sup):
+            return pct
+    return None
 
 
 def detectar_saltos_anomalos(serie: pd.Series, limiar_desvios: float = 3.0) -> pd.DataFrame:
@@ -1084,6 +1120,69 @@ def diagnostico_residuos(modelo_ajustado) -> dict:
         "breusch_pagan_stat": round(float(bp_stat), 2),
         "breusch_pagan_p": round(float(bp_p), 4),
     }
+
+
+def construir_features_tabulares_serie(
+    serie: pd.Series,
+    exogenas: pd.DataFrame,
+    n_lags: int = 7,
+) -> pd.DataFrame:
+    """Monta uma matriz tabular (lags 1..n_lags da própria série + exógenas
+    de calendário) a partir de uma série temporal — usada para alimentar
+    um regressor de árvore (CatBoost) como baseline competidor do
+    SARIMAX no Desafio 1.
+
+    Descarta as primeiras `n_lags` linhas (sem histórico suficiente para
+    todos os lags) — é a mesma ideia de "sacrificar linhas iniciais" já
+    aceita no resto do projeto para não inventar dado onde não existe.
+
+    Retorna um DataFrame com coluna `y` (o valor a prever) + `lag_1`..
+    `lag_n` + as colunas de `exogenas`, todas alinhadas pelo índice de
+    `serie` (deve ser um índice de data).
+    """
+    df = pd.DataFrame({"y": serie})
+    for lag in range(1, n_lags + 1):
+        df[f"lag_{lag}"] = serie.shift(lag)
+    df = df.join(exogenas)
+    return df.dropna()
+
+
+def treinar_catboost_regressor_fold(
+    df_treino: pd.DataFrame,
+    df_teste: pd.DataFrame,
+    target_col: str,
+    params: dict | None = None,
+    random_state: int = 42,
+) -> dict:
+    """Treina um `CatBoostRegressor` num fold — baseline de árvore para o
+    Desafio 1 (previsão de volume), competindo com o SARIMAX/ARIMAX.
+
+    Diferente de `treinar_catboost_fold` (Desafio 3, classificação de
+    evento raro): aqui não há `auto_class_weights` (não se aplica a
+    regressão) nem `text_features` (as features aqui são só lags
+    numéricos e calendário, sem texto) — é o mesmo motor (CatBoost),
+    mas outro problema.
+    """
+    from catboost import CatBoostRegressor, Pool
+
+    params_padrao = {
+        "iterations": 300, "learning_rate": 0.05, "depth": 4, "l2_leaf_reg": 3.0,
+        "loss_function": "RMSE", "random_state": random_state, "verbose": False,
+    }
+    if params:
+        params_padrao.update(params)
+
+    X_treino, y_treino = df_treino.drop(columns=[target_col]), df_treino[target_col]
+    X_teste, y_teste = df_teste.drop(columns=[target_col]), df_teste[target_col]
+
+    pool_treino = Pool(X_treino, y_treino)
+    pool_teste = Pool(X_teste, y_teste)
+
+    modelo = CatBoostRegressor(**params_padrao)
+    modelo.fit(pool_treino, eval_set=pool_teste, use_best_model=False)
+
+    y_previsto = modelo.predict(pool_teste)
+    return {"modelo": modelo, "y_true": y_teste.values, "y_previsto": y_previsto}
 
 
 # =====================================================================
