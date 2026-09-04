@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pydantic
+anthropic
+# catboost: removido por ora. Sozinho (com numpy/scipy) passa de 587MB e estoura o
+# limite de 500MB do Vercel — e ainda não é importado (ver carregar_modelo_catboost()
+# em api/index.py). Ao implementar a inferência real, resolver o tamanho do bundle
+# (função Python separada, carregar o modelo de storage externo, etc.) antes de reativar.

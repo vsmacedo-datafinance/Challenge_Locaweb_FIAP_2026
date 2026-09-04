@@ -1,0 +1,10 @@
+{
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/index" }
+  ],
+  "functions": {
+    "api/index.py": {
+      "excludeFiles": "{app/**,components/**,public/**,.next/**,node_modules/**,*.ts,*.tsx,*.mjs}"
+    }
+  }
+}
