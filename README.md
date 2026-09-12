@@ -26,7 +26,6 @@
 - [Destaques de Engenharia & Rigor Econométrico](#-destaques-de-engenharia--rigor-econométrico)
 - [Resultados da Modelagem](#-resultados-da-modelagem)
 - [Estrutura do Repositório](#-estrutura-do-repositório)
-- [Próximos Passos](#-próximos-passos)
 
 ---
 
