@@ -1,0 +1,34 @@
+# Projeto Chronos — dependências pinadas
+# Testado em conjunto (sem conflito de versão) — ver README para instrução de uso no Colab.
+# Gerar de novo a partir do ambiente real do Colab antes da entrega final, se possível
+# (rodar `pip freeze` lá e comparar com este arquivo).
+
+# --- Core ---
+pandas==3.0.2
+numpy==2.4.4
+scipy==1.17.1
+matplotlib==3.10.8
+seaborn==0.13.2
+
+# --- Séries temporais (Desafio 1) ---
+statsmodels==0.15.0
+pmdarima==2.1.1
+
+# --- Classificação e otimização (Desafio 3) ---
+catboost==1.2.10
+scikit-learn==1.8.0
+optuna==4.9.0
+
+# --- Explicabilidade (Desafio 4) ---
+shap==0.52.0
+
+# --- Deep Learning (Sprint DL) ---
+tensorflow==2.21.0
+keras==3.15.1
+
+# --- Qualidade de dado / EDA ---
+missingno==0.5.2
+openpyxl==3.1.5
+
+# --- Testes ---
+pytest==9.1.1
