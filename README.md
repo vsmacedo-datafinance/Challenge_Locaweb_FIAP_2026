@@ -5,9 +5,9 @@
 ![Estatística](https://img.shields.io/badge/Stats-Econometrics-brightgreen?style=for-the-badge)
 ![Arquitetura](https://img.shields.io/badge/Architecture-Medallion-FFD700?style=for-the-badge)
 
-**Repositório oficial do Projeto Chronos, desenvolvido para o Challenge Locaweb 2026 (FIAP).**
+**Solução de AIOps para previsão de incidentes e tendências operacionais, desenvolvida para o Challenge Locaweb 2026 (FIAP).**
 
-**Link do repositório:** https://github.com/vsmacedo-datafinance/Challenge_Locaweb_FIAP_2026
+**Repositório:** https://github.com/vsmacedo-datafinance/Challenge_Locaweb_FIAP_2026
 
 ## 👥 Equipe
 
@@ -20,109 +20,154 @@
 
 ## 📑 Sumário
 
-- [Resumo Executivo](#-resumo-executivo)
-- [Ordem de Leitura Recomendada](#-ordem-de-leitura-recomendada)
-- [Arquitetura de Dados (Pipeline)](#️-arquitetura-de-dados-pipeline)
-- [Destaques de Engenharia & Rigor Econométrico](#-destaques-de-engenharia--rigor-econométrico)
-- [Resultados da Modelagem](#-resultados-da-modelagem)
+- [O que esta solução entrega](#-o-que-esta-solução-entrega)
+- [Ordem de Leitura](#-ordem-de-leitura)
+- [Arquitetura de Dados](#️-arquitetura-de-dados)
+- [Resultados por Desafio](#-resultados-por-desafio)
+- [Rigor Metodológico](#-rigor-metodológico)
+- [Saídas para o Dashboard](#-saídas-para-o-dashboard)
 - [Estrutura do Repositório](#-estrutura-do-repositório)
 
 ---
 
-## 🎯 Resumo Executivo
+## 🎯 O que esta solução entrega
 
-O Projeto Chronos aplica ciência de dados à gestão de incidentes da Locaweb, cobrindo os 4 desafios analíticos do enunciado oficial (previsão de volume, tendências, classificação de risco e explicabilidade) mais duas entregas acadêmicas (Machine Learning e Deep Learning). A arquitetura segue o padrão **Medalhão** (Bronze/Silver/Gold), com **tolerância zero a *data leakage*** e rigor econométrico documentado em cada decisão.
+Os quatro desafios analíticos do enunciado oficial, mais duas entregas acadêmicas (Machine Learning e Deep Learning), construídos sobre uma arquitetura Medalhão (Bronze/Silver/Gold) com disciplina anti-vazamento de ponta a ponta:
 
-Uma auditoria técnica em duas rodadas (interna + revisão de um segundo modelo de IA) encontrou e corrigiu um **bug real na previsão de produção do Desafio 1** — causado por censura no campo `Entrou para KPI?` — e um **problema de design na explicabilidade do Desafio 4** (SHAP calculado sobre os mesmos dados de treino). As duas correções estão implementadas, testadas (**44 testes automatizados, todos passando**) e validadas com dado real — os 11 notebooks do repositório rodam do início ao fim sem erro, e os números deste README foram conferidos diretamente nas saídas reais mais recentes.
+| Desafio | Entrega | Resultado principal |
+|---|---|---|
+| **1 — Antecipar incidentes** | Previsão de volume D+1/D+7 por prioridade (SARIMAX Bottom-Up) | MAE D+1: **4,07** (P2) e **9,49** (P3) |
+| **2 — Identificar tendências** | Decomposição do crescimento por origem e elegibilidade | **113%** do crescimento vem de Monitoramento não-elegível |
+| **3 — Projetar impacto nos KPIs** | Classificação de risco de violação de OLA (CatBoost) | PR-AUC **0,1501** — 17x o baseline |
+| **4 — Apoiar decisão operacional** | Explicabilidade por chamado (SHAP) | **6 de 10** chamados de maior risco violaram de fato |
+
+Base: 121.811 chamados, dos quais 25.156 elegíveis para KPI (238 violações — 0,95%). Cobertura de código: **44 testes automatizados**.
 
 ---
 
-## 📖 Ordem de Leitura Recomendada
+## 📖 Ordem de Leitura
 
-1. **`01_bronze_ingestao.ipynb`** — ingestão bruta, sem regra de negócio.
-2. **`EDA_Completa.ipynb`** — primeira rodada de análise exploratória.
-3. **`EDA_Complementar.ipynb`** — segunda rodada, aprofunda/revisa achados da EDA Completa.
-4. **`02_silver_limpeza.ipynb`** — limpeza e regras de negócio, cada uma com evidência estatística.
-5. **`03_gold_features.ipynb`** — features, série elegível/bruta separada, `tem_incidente_pai` removida (regra oficial do Dicionário v2).
-6. **`Sprint_3_ML.ipynb`** e **`Sprint_3_DL.ipynb`** — entregas acadêmicas (regressão logística e ANN), mesma base da Gold.
+1. **`01_bronze_ingestao.ipynb`** — ingestão bruta, validação de schema e domínio.
+2. **`EDA_Completa.ipynb`** — análise exploratória principal.
+3. **`EDA_Complementar.ipynb`** — aprofundamento e revisão de hipóteses.
+4. **`02_silver_limpeza.ipynb`** — regras de negócio, cada uma com evidência estatística.
+5. **`03_gold_features.ipynb`** — engenharia de features e as três tabelas de consumo.
+6. **`Sprint_3_ML.ipynb`** / **`Sprint_3_DL.ipynb`** — entregas acadêmicas.
 7. **`04_Sarimax_Previsão_de_Volume.ipynb`** — Desafio 1.
 8. **`07_Tendencias_Operacionais.ipynb`** — Desafio 2.
 9. **`05_Catboost_Risco_de_Violação_de_OLA.ipynb`** — Desafio 3.
-10. **`06_SHAP_Explicabilidade.ipynb`** — Desafio 4 — depende do `.cbm` salvo pelo notebook 05.
+10. **`06_SHAP_Explicabilidade.ipynb`** — Desafio 4 (consome o modelo salvo pelo notebook 05).
 
 ---
 
-## 🏗️ Arquitetura de Dados (Pipeline)
+## 🏗️ Arquitetura de Dados
 
-Toda a lógica reutilizável está centralizada em `src/utils.py` — com uma divisória explícita separando as funções do projeto principal das funções exclusivas das Sprints acadêmicas de ML/DL. A suíte de **44 testes automatizados** (`src/test_utils.py`) cobre as funções causais, os modelos e as correções mais recentes (detecção de censura, avaliação por horizonte, IC conjunto, SHAP) — rodei a suíte inteira antes de fechar este README, todos os 44 passam.
+Toda lógica reutilizável centralizada em `src/utils.py`, com divisória explícita separando funções do projeto das funções exclusivas das Sprints acadêmicas.
 
-### 🥉 Camada Bronze
-Ingestão sem regra de negócio: validação de schema, validação de domínio, metadados de proveniência (`_ingested_at`, `_source_hash`).
+### 🥉 Bronze — Ingestão e Auditoria
+Validação estrita de schema (19 colunas do dicionário), validação de domínio categórico, e metadados de proveniência (`_ingested_at`, `_source_layer`, `_source_hash` SHA-256). Nenhuma regra de negócio.
 
-### 🥈 Camada Silver
-Limpeza e regras de negócio, cada uma com a evidência estatística que a sustenta: exclusão de 2023-2024 (perfil categórico anômalo), tratamento MNAR de `Produto`/`Categoria` (χ² = 36.726,99, p ≈ 0), *winsorização* de `Duração`, texto normalizado sem aprendizado de vocabulário.
+### 🥈 Silver — Limpeza com Evidência
+Cada regra carrega o teste estatístico que a justifica:
+* **Filtro de regime:** exclusão de 2023-2024 (0,6% da base) — perfil categórico sistematicamente distinto de 2025.
+* **Missingness MNAR:** χ² = 36.726,99 (p ≈ 0) confirma que os nulos de `Produto`/`Categoria` dependem estruturalmente da origem automática. Nenhuma imputação — criada a flag de cobertura.
+* **Winsorização:** cauda de `Duração` tratada com capping no P99 + `log1p`.
+* **Texto determinístico:** normalização sem vocabulário aprendido, evitando vazamento.
 
-### 🥇 Camada Gold
-Três tabelas isoladas por desafio, com contrato de dados automático:
-1. **`gold_volume_diario`** — série elegível e bruta, separada por prioridade (P2/P3), para o SARIMAX.
-2. **`gold_tendencias_macro`** — agregação semanal com dimensão `elegivel_kpi`, para o Desafio 2.
-3. **`gold_chamados_risco`** — matriz granular para o CatBoost e o SHAP, sem `tem_incidente_pai`/`incidente_pai_contagem_historica` (regra oficial: incidente com pai preenchido não entra em KPI). Distribuição real de `Prioridade`: 4-Baixa (64.580), 3-Média (41.260), 2-Alta (15.645), 5-Muito Baixa (325), **1-Crítica (1 chamado — existe, mas é irrelevante em volume)**.
+### 🥇 Gold — Feature Store
+Três tabelas isoladas, com contrato de dados gerado automaticamente:
+1. **`gold_volume_diario`** — série diária elegível e bruta, por prioridade, com variáveis cíclicas e lags causais (t-1 a t-7).
+2. **`gold_tendencias_macro`** — agregação semanal com dimensão `elegivel_kpi`.
+3. **`gold_chamados_risco`** — matriz granular de predição, com exclusão cirúrgica de variáveis pós-evento (`Resolvido`, `Duração`, `Status`, `Código de fechamento`).
 
----
-
-## 🔬 Destaques de Engenharia & Rigor Econométrico
-
-### 1. Estatística de séries temporais (Desafio 1)
-ADF/KPSS para `d=1`; abordagem **Bottom-Up** (P2 e P3 modelados separadamente, somados na produção); diagnóstico de resíduos (Ljung-Box, Breusch-Pagan, Jarque-Bera); intervalo por *bootstrap*; correção de viés de Duan; teste de parcimônia por BIC; piso em zero.
-
-**Achado crítico confirmado com dado real**: o campo `Entrou para KPI?` é **censurado** — sua proporção semanal, estável por meses, despenca nas últimas semanas da base (queda de mais de 80% na semana final). Consistente com o campo sendo preenchido só no fechamento do chamado. O treino do modelo de produção foi cortado em **07/12/2025** para não herdar esse artefato — sem essa correção, a previsão de P3 chegava a sair zerada em dias normais, contra uma média histórica de 54,8/dia.
-
-**Métrica por horizonte (D+1/D+7)**, critério oficial da banca, medida com validação de origem rolante — antes só existia MAE de bloco de 49 dias. Isso mudou a especificação vencedora em ambas as séries: P2 → `sarima_classico`; P3 → `sarimax_hibrido` (escala log1p). O MAE em D+1/D+7 de P3 (9,49 e 10,1) é, na verdade, melhor do que a métrica de bloco antiga sugeria (13,11).
-
-**Intervalo de confiança conjunto**: a soma de P2+P3 usa *bootstrap* que sorteia o mesmo dia para as duas séries, preservando a correlação real entre os erros, em vez de somar os limites de cada IC separadamente.
-
-### 2. Probabilidade e associação categórica (Desafios 2, 3 e 4)
-Kruskal-Wallis (mistura de populações em `Duração`); V de Cramér (associação categórica); `grupo_baixo_volume` (guardrail de *cold start*); separação quase-completa identificada e resolvida na Sprint de ML (cascata de 3 níveis) — resultado real: só 3 de 38 coeficientes estatisticamente significativos, **nenhum de `Grupo designado`**; Ordered Target Statistics do CatBoost.
-
-**Calibração de threshold honesta**: o threshold de decisão do CatBoost era calibrado no mesmo conjunto de teste usado para reportar a métrica — otimista por construção. Corrigido para calibrar numa fatia de validação interna e só então aplicar ao teste real: o resultado corrigido é mais conservador (recall de 11,8%, não mais 26,5%) — um número menos bonito, porém defensável.
-
-**SHAP validado contra memorização**: o modelo de produção do CatBoost treina com 100% do histórico — explicá-lo sobre os mesmos dados mistura sinal real com decoreba. A correção reconstrói o modelo do fold 3 (nunca viu o período de teste): 6 dos 10 chamados mais arriscados **fora da amostra** violaram de fato. Os 5 chamados que aparecem nos dois rankings (in-sample e out-of-sample) foram auditados individualmente — **todos são violações reais confirmadas**, evidência de sinal genuíno, não de viés estrutural.
+Distribuição real de `Prioridade`: 4-Baixa (64.580), 3-Média (41.260), 2-Alta (15.645), 5-Muito Baixa (325), 1-Crítica (1).
 
 ---
 
-## 🚀 Resultados da Modelagem
+## 🚀 Resultados por Desafio
 
-### ✅ Desafio 1 — Previsão de Volume (SARIMAX, Bottom-Up)
+### ✅ Desafio 1 — Previsão de Volume (SARIMAX Bottom-Up)
 
-* **Especificação final**: P2 → `sarima_classico` (escala bruta); P3 → `sarimax_hibrido` (escala log1p) — vencedores pelo critério oficial D+1/D+7.
-* **MAE por horizonte** (média dos 3 folds): P2 — D+1: 4,07 | D+7: 4,32. P3 — D+1: 9,49 | D+7: 10,1.
-* **Produção**: treino cortado em 07/12/2025 (censura confirmada). W+1 consolidado de **477 chamados** (P2: 96 | P3: 381), IC 90% por *bootstrap* conjunto de [273, 788]. Nenhum valor negativo em nenhuma etapa.
-* **Guardrail de plausibilidade**: previsão desvia -5,4% (P2) e +21,9% (P3) da média das últimas 8 semanas — dentro do limite de ±50%, sem alerta.
-* **Teto Contratual (Dicionário v2)**: 2025 fechou em 125% de atingimento de volume em ambas as prioridades; projeção 2026 mantém o mesmo patamar (P2: 125%, P3: 125%).
-* **Projeção de perda de OLA D+1/D+7**: estimativa de 4,9 violações esperadas em W+1 — **validada contra um período real e subestimou** (erro absoluto de 18,3 no fold 3). A multiplicação simples (volume previsto × taxa histórica) é direcionalmente correta, mas não deve ser apresentada como número exato sem essa ressalva.
+P2 e P3 são modelados **separadamente** — a decomposição STL confirma dinâmicas distintas (P3 com sazonalidade semanal significativamente mais forte) — e somados apenas na etapa de produção. A seleção de modelo usa erro medido especificamente em **D+1 e D+7**, com validação de origem rolante, que é o critério de avaliação oficial.
 
-### ✅ Desafio 2 — Tendências e Fatores de Crescimento
+| | P2 | P3 |
+|---|---|---|
+| Especificação vencedora | `sarima_classico` (escala bruta) | `sarimax_hibrido` (escala log1p) |
+| MAE D+1 | 4,07 | 9,49 |
+| MAE D+7 | 4,32 | 10,10 |
+| Previsão W+1 | 96 chamados | 381 chamados |
 
-* **Achado central**: o volume total de chamados cresceu +840/semana entre as janelas comparadas — mas **113% desse crescimento vem de chamados de Monitoramento não-elegíveis para KPI**. O volume elegível de verdade, nas mesmas janelas, caiu. Responde diretamente à pergunta oficial "o que mais influencia o aumento de incidentes": é ruído de monitoramento automático, não demanda operacional real.
-* **Atingimento acumulado de OLA**: P2 em 75% (ritmo recente projeta 50% se mantido); P3 em 150%. Consistente com o achado do Desafio 1 de que P2 tem volume sob controle mas taxa de violação proporcionalmente pior.
-* **Cobertura de categorização caindo**: 18,7% no período recente contra 40,0% no período anterior.
+**W+1 consolidado: 477 chamados elegíveis**, com IC 90% de [273, 788] por bootstrap conjunto (reamostragem pareada, preservando a correlação entre as séries). Validação automática de plausibilidade confirma desvio de -5,4% (P2) e +21,9% (P3) frente à média das últimas 8 semanas.
 
-### ✅ Desafio 3 — Classificação de Risco (CatBoost)
+**Teto Contratual:** 2025 fechou em **125% de atingimento** de volume em ambas as prioridades, medido contra as faixas oficiais do Dicionário de Dados v2. Projeção 2026 mantém o mesmo patamar.
 
-* **Resultado**: PR-AUC médio de **0,1501** (baseline: 0,0088) — 17x melhor. ROC-AUC médio de 0,8075.
-* **Threshold corrigido**: calibrado numa validação interna, aplicado ao teste real — 7 alertas, precisão de 57,1%, recall de 11,8% (a calibração anterior, otimista por usar o próprio teste, mostrava recall de 26,5%).
-* **Top *features*** (pós-remoção de `tem_incidente_pai`): `descricao_limpa`, `grupo_contagem_historica`, `pressao_fila_7d`.
+### ✅ Desafio 2 — Tendências Operacionais
+
+Decomposição do crescimento de volume por origem (`Aberto por`) e elegibilidade (`elegivel_kpi`):
+
+* Crescimento total: **+840 chamados/semana** entre as janelas comparadas.
+* **113% desse crescimento vem de chamados de Monitoramento não-elegíveis para KPI** — o volume elegível, que representa a demanda operacional real, apresentou queda no mesmo período.
+* **Atingimento acumulado de OLA:** P2 em 75% (ritmo recente projeta 50%); P3 em 150%.
+* **Cobertura de categorização:** 18,7% no período recente contra 40,0% no anterior.
+
+A leitura de negócio: o aumento aparente de incidentes é dominado por ruído de alertas automáticos, não por crescimento de demanda sobre as equipes.
+
+### ✅ Desafio 3 — Risco de Violação de OLA (CatBoost)
+
+Classificação sob desbalanceamento extremo (0,95% de positivos), sem SMOTE/SMOTEENN em nenhum momento — balanceamento via `auto_class_weights`.
+
+| Métrica | Valor |
+|---|---|
+| PR-AUC médio (3 folds) | **0,1501** |
+| PR-AUC baseline (taxa histórica) | 0,0088 — **17x inferior** |
+| ROC-AUC médio | 0,8075 |
+| Threshold calibrado (custo 1:15) | 0,6144 |
+| Precisão / Recall no threshold | 57,1% / 11,8% |
+
+**Top features:** `descricao_limpa`, `grupo_contagem_historica`, `pressao_fila_7d`.
+
+O threshold é calibrado numa fatia de validação interna e só então aplicado ao conjunto de teste — a precisão reportada é o desempenho real esperado, não o do ponto de corte otimizado sobre o próprio teste.
 
 ### ✅ Desafio 4 — Explicabilidade (SHAP)
 
-* **Quais fatores mais influenciam o risco de violação?** Por SHAP, os 5 fatores mais usados pelo modelo: `descricao_limpa` (0,78 de |SHAP| médio — dominante), `descricao_contagem_historica` (0,32, tende a não aumentar risco — problema recorrente já tem rotina), `grupo_contagem_historica` (0,28), `grupo_chamados_ultima_hora` (0,27), `hora_cos` (0,20). `Grupo designado` (maior V de Cramér na EDA) cai para posição distante no SHAP — o sinal da equipe é majoritariamente absorvido pelas features derivadas de carga.
-* **Onde estão os principais riscos operacionais?** Fora da amostra (fold 3), PR-AUC de 0,2141, 6 de 10 chamados mais críticos violaram de fato. Por taxa observada com intervalo de Wilson: templates "erro instalacao" (6,7%, n=30) e "problem check postgresql" (3,0%, n=33) concentram risco, com amostra pequena o bastante para exigir cautela na leitura.
-* **Cautela obrigatória**: equipes com `grupo_baixo_volume=1` e templates com IC largo não devem ser lidos como problema de desempenho confirmado — a amostra não sustenta essa conclusão.
+Explicação em três camadas — global (quais fatores pesam no modelo), local (por que este chamado específico) e descritiva (quais tipos de chamado concentram violação).
 
-### 📎 Sprints Acadêmicas (ML e DL)
+* **Fatores de maior peso:** `descricao_limpa` (dominante, 1,8x o segundo colocado), `descricao_contagem_historica` (tende a **reduzir** risco — problema recorrente já tem rotina de resolução), `grupo_contagem_historica`, `grupo_chamados_ultima_hora`.
+* **Validação fora da amostra:** PR-AUC de **0,2141** no fold 3, com **6 de 10** chamados apontados como mais críticos violando de fato (taxa base: 1,30%).
+* **Concentração de risco:** templates "erro instalacao" (6,7%, n=30) e "problem check postgresql" (3,0%, n=33), reportados com intervalo de Wilson para não confundir amostra pequena com sinal.
+* `Grupo designado` — a variável de maior V de Cramér na EDA — aparece em posição distante no ranking SHAP: o efeito de equipe é majoritariamente absorvido pelas features derivadas de carga operacional.
 
-* **ML — Regressão Logística**: PR-AUC médio ~0,043 (ROC-AUC ~0,807, quase empatado com o CatBoost — evidência direta de por que PR-AUC é a métrica primária do projeto).
-* **DL — ANN**: PR-AUC 0,0727 no fold 3 (clusterização de texto testada e descartada). MVP funcional validado com chamado real do histórico.
+### 📎 Sprints Acadêmicas
+
+| Modelo | PR-AUC (fold 3) | ROC-AUC |
+|---|---|---|
+| Regressão Logística (ML) | 0,0518 | 0,7756 |
+| ANN (DL) | 0,0727 | 0,8033 |
+| CatBoost (Desafio 3) | 0,2401 | 0,7808 |
+
+A proximidade dos ROC-AUC contra a distância dos PR-AUC é a evidência direta de por que **PR-AUC é a métrica primária** do projeto. A Sprint de DL inclui MVP funcional local (`prever_risco_chamado`).
+
+---
+
+## 🔬 Rigor Metodológico
+
+**Séries temporais:** ADF/KPSS para determinação de `d=1`; walk-forward em 3 folds temporais estritos; diagnóstico formal de resíduos (Ljung-Box, Breusch-Pagan, Jarque-Bera); intervalo de previsão por bootstrap dos resíduos (a curtose observada invalida a premissa gaussiana); correção de viés de Duan na reversão logarítmica; teste de parcimônia por BIC; piso em zero nas previsões e limites inferiores.
+
+**Classificação:** Optuna dentro de cada fold de treino; Ordered Target Statistics nativo do CatBoost em vez de target encoding manual; guardrail `grupo_baixo_volume` (n < 100) para evitar leitura enganosa de risco em amostra insuficiente; SHAP com verificação da propriedade aditiva (soma das contribuições reproduz exatamente o log-odds previsto).
+
+**Interpretação estatística:** intervalo de Wilson nas taxas por categoria; teste de estabilidade de ranking por tamanho mínimo de amostra; na Sprint de ML, tratamento explícito de separação quase-completa via cascata de três níveis (ajuste clássico → regularização L2 → bootstrap), com o resultado real reportado: apenas 3 de 38 coeficientes estatisticamente significativos, nenhum deles de `Grupo designado`.
+
+---
+
+## 📊 Saídas para o Dashboard
+
+Os notebooks exportam para `data/gold/exports_dashboard/` os artefatos de consumo do MVP de visualização:
+
+* Série diária de volume, elegível e bruta, por prioridade
+* Tendências semanais com dimensão de elegibilidade
+* Previsão D+1/D+7 com intervalos de confiança
+* Painel de risco por chamado, com as três principais razões (SHAP) de cada um
+* Atingimento de KPI contra as faixas oficiais
 
 ---
 
@@ -147,10 +192,13 @@ Kruskal-Wallis (mistura de populações em `Duração`); V de Cramér (associaç
 │   ├── Sprint_3_ML.ipynb
 │   └── Sprint_3_DL.ipynb
 ├── src/
-│   ├── utils.py                                            # módulo central do projeto + Sprints
-│   └── test_utils.py                                       # 44 testes automatizados
+│   ├── utils.py            # módulo central — projeto + Sprints
+│   └── test_utils.py       # 44 testes automatizados
 ├── .gitattributes
+├── requirements.txt
 └── README.md
 ```
 
-> As pastas `data/bronze`, `data/silver` e `data/gold` são versionadas vazias (`.gitkeep`) — os parquets ficam no Google Drive montado em runtime, não no Git.
+> As pastas de `data/` são versionadas vazias (`.gitkeep`) — os parquets ficam no Google Drive montado em runtime.
+
+---
