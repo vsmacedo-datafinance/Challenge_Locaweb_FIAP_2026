@@ -2,7 +2,7 @@
 utils.py — Projeto Chronos (Locaweb Challenge 2026)
 Utilitários compartilhados entre as camadas Bronze / Silver / Gold e os
 notebooks de modelagem dos DESAFIOS OFICIAIS do challenge (Desafio 1 —
-SARIMAX, Desafio 3 — CatBoost, Desafio 4 — SHAP).
+SARIMAX, Desafio 2 — tendências, Desafio 3 — CatBoost, Desafio 4 — SHAP).
 
 >>> ESTRUTURA DO ARQUIVO: PROJETO PRIMEIRO, SPRINT NO FINAL <<<
 Este arquivo tem uma divisória visível (procure por "FIM DO ESCOPO DO
@@ -1286,7 +1286,15 @@ def treinar_catboost_fold(
     pool_teste = Pool(X_teste, y_teste, cat_features=cat_features, text_features=text_features or [])
 
     modelo = CatBoostClassifier(**params_padrao)
-    modelo.fit(pool_treino, eval_set=pool_teste, use_best_model=False)
+    # Pendência 6 (revisão de 06/09): o Pool de teste NÃO entra mais como `eval_set`.
+    # Com `use_best_model=False` e sem early stopping ele nunca influenciou o ajuste
+    # (só logava métrica), mas passar o teste para dentro do `fit` é o tipo de
+    # detalhe que um avaliador aponta na hora e que obriga a explicar que "não vaza".
+    # O número de iterações vem fixo dos hiperparâmetros escolhidos pelo Optuna
+    # (que já usa uma fatia de validação interna do treino), então não há nada a
+    # monitorar aqui. Resultado esperado: idêntico ao anterior — confirmar na
+    # re-execução do zero.
+    modelo.fit(pool_treino)
 
     y_score_teste = modelo.predict_proba(pool_teste)[:, 1]
     return {"modelo": modelo, "y_true": y_teste.values, "y_score": y_score_teste, "params": params_padrao}
@@ -1603,6 +1611,492 @@ def gerar_contrato_dados(
         caminho_saida.write_text("\n".join(linhas_md), encoding="utf-8")
 
     return contrato
+
+
+
+# =====================================================================
+# 17. GUARDRAILS DE PRODUÇÃO — censura de elegibilidade e plausibilidade
+# =====================================================================
+# Adicionado na revisão de 06/09 (Pendência 1 do briefing). Motivação: a
+# previsão de produção de P3 saiu em 14-20 chamados/dia (média histórica
+# 54,8/dia) sem nenhum alerta. Duas causas prováveis, duas funções:
+# (a) `Entrou para KPI?` pode ser preenchido só no fechamento, gerando uma
+#     queda artificial da série elegível nas últimas semanas da extração
+#     (censura à direita) — `detectar_censura_elegibilidade` mede isso;
+# (b) mesmo quando a causa for outra, um número tão fora do histórico não
+#     pode sair sem aviso — `validar_previsao_producao` é o guardrail.
+
+def proporcao_elegivel_por_semana(
+    df: pd.DataFrame,
+    time_col: str = "Aberto",
+    flag_col: str = "Entrou para KPI?",
+    valor_positivo: str = "SIM",
+) -> pd.Series:
+    """Proporção semanal de chamados com `flag_col == valor_positivo`,
+    indexada pela semana (Period 'W'). É o teste de diagnóstico da
+    Pendência 1: se a proporção é estável o ano inteiro e cai só nas
+    últimas semanas, a queda da série elegível é censura, não realidade.
+    """
+    semana = pd.to_datetime(df[time_col]).dt.to_period("W")
+    flag = df[flag_col].eq(valor_positivo)
+    return flag.groupby(semana).mean().rename("proporcao_elegivel")
+
+
+def detectar_censura_elegibilidade(
+    proporcao_semanal: pd.Series,
+    semanas_referencia: int = 20,
+    semanas_finais_max: int = 4,
+    limiar_relativo: float = 0.7,
+) -> dict:
+    """Decide, com evidência, se as últimas semanas da série de proporção
+    elegível estão censuradas.
+
+    Referência = mediana das `semanas_referencia` semanas imediatamente
+    anteriores à janela final analisada (não a média do ano inteiro, para
+    não misturar um regime antigo). Uma semana final é considerada censurada
+    se sua proporção ficar abaixo de `limiar_relativo` × referência.
+
+    Só as semanas censuradas CONTÍGUAS ao fim da série contam — uma semana
+    baixa isolada no meio não é censura de extração, é outra coisa.
+
+    Retorna: `censurado` (bool), `n_semanas_censuradas`, `data_corte`
+    (primeiro dia da primeira semana censurada — treinar até o dia anterior)
+    ou None, `referencia`, e a tabela `detalhe` das semanas finais.
+    """
+    serie = proporcao_semanal.dropna()
+    if len(serie) < semanas_referencia + semanas_finais_max:
+        raise ValueError(
+            f"Série curta demais ({len(serie)} semanas) para {semanas_referencia} de referência "
+            f"+ {semanas_finais_max} finais."
+        )
+
+    finais = serie.iloc[-semanas_finais_max:]
+    referencia = float(serie.iloc[-(semanas_referencia + semanas_finais_max):-semanas_finais_max].median())
+    abaixo = (finais < limiar_relativo * referencia).values
+
+    # conta censuradas de trás para frente, parando na primeira semana normal
+    n_censuradas = 0
+    for flag in abaixo[::-1]:
+        if not flag:
+            break
+        n_censuradas += 1
+
+    data_corte = None
+    if n_censuradas:
+        primeira_censurada = finais.index[-n_censuradas]
+        data_corte = primeira_censurada.start_time.normalize()
+
+    detalhe = pd.DataFrame({
+        "semana": [str(p) for p in finais.index],
+        "proporcao_elegivel": finais.values.round(4),
+        "referencia": round(referencia, 4),
+        "abaixo_do_limiar": abaixo,
+    })
+    return {
+        "censurado": n_censuradas > 0,
+        "n_semanas_censuradas": n_censuradas,
+        "data_corte": data_corte,
+        "referencia": round(referencia, 4),
+        "detalhe": detalhe,
+    }
+
+
+def validar_previsao_producao(
+    previsao_semanal: float,
+    serie_historica: pd.Series,
+    limite_desvio_pct: float = 50,
+    semanas_recentes: int = 8,
+    logger: logging.Logger | None = None,
+) -> dict:
+    """Compara a previsão semanal projetada contra a média das últimas
+    `semanas_recentes` semanas da série histórica — não deixa uma previsão
+    implausível sair sem aviso (Pendência 1).
+
+    Passe `serie_historica` JÁ sem o trecho censurado (se houver): comparar
+    contra uma cauda censurada só validaria o erro. Loga WARNING quando o
+    desvio passa de `limite_desvio_pct`; não levanta exceção, porque a
+    decisão de seguir ou não é do notebook, em contexto.
+    """
+    log = logger or logging.getLogger("cronos")
+    media_recente = float(serie_historica.tail(7 * semanas_recentes).mean() * 7)
+    if media_recente == 0:
+        raise ValueError("Média recente igual a zero — série histórica vazia ou inválida.")
+    desvio_pct = (previsao_semanal - media_recente) / media_recente * 100
+    dentro_do_esperado = abs(desvio_pct) <= limite_desvio_pct
+    if not dentro_do_esperado:
+        log.warning(
+            "Previsão semanal (%.1f) desvia %.1f%% da média recente (%.1f) — acima do limite de %.0f%%. "
+            "Não publicar sem investigar.",
+            previsao_semanal, desvio_pct, media_recente, limite_desvio_pct,
+        )
+    else:
+        log.info("Previsão semanal (%.1f) dentro de ±%.0f%% da média recente (%.1f).",
+                 previsao_semanal, limite_desvio_pct, media_recente)
+    return {
+        "previsao_semanal": float(previsao_semanal),
+        "media_recente": round(media_recente, 1),
+        "desvio_pct": round(desvio_pct, 1),
+        "dentro_do_esperado": bool(dentro_do_esperado),
+    }
+
+
+# =====================================================================
+# 18. DESAFIO 1 — MÉTRICA POR HORIZONTE, IC CONJUNTO E PERDA DE OLA
+# =====================================================================
+
+def avaliar_por_horizonte(
+    modelo,
+    serie_teste: pd.Series,
+    exog_teste: pd.DataFrame | None = None,
+    horizontes: tuple = (1, 7),
+) -> dict:
+    """MAE por horizonte com origem rolante (Pendência 7): a cada dia do
+    teste, prevê `h` passos à frente e depois incorpora o valor real do dia
+    ao estado do modelo (`update`, sem reajustar parâmetros). Mede
+    exatamente o critério oficial da banca — antecipação em D+1 e D+7 —
+    em vez do bloco inteiro de 49 dias.
+
+    `modelo` precisa expor `predict(n_periods, X)` e `update(y, X)`
+    (interface do pmdarima). A função trabalha sobre uma CÓPIA PROFUNDA
+    do modelo — o objeto passado não é alterado, então a métrica de bloco
+    inteiro já calculada no notebook continua válida.
+
+    Previsões são pisadas em zero (contagem nunca é negativa), mesma regra
+    de `rodar_variante_sarimax`.
+    """
+    import copy
+
+    modelo = copy.deepcopy(modelo)
+    horizontes = tuple(sorted(int(h) for h in horizontes))
+    erros = {h: [] for h in horizontes}
+    n = len(serie_teste)
+
+    for t in range(n):
+        alcancaveis = [h for h in horizontes if t + h <= n]
+        if alcancaveis:
+            h_max = max(alcancaveis)
+            X = exog_teste.iloc[t:t + h_max] if exog_teste is not None else None
+            prev = np.maximum(np.asarray(modelo.predict(n_periods=h_max, X=X), dtype=float), 0)
+            for h in alcancaveis:
+                erros[h].append(abs(float(serie_teste.iloc[t + h - 1]) - prev[h - 1]))
+        X_t = exog_teste.iloc[[t]] if exog_teste is not None else None
+        modelo.update(serie_teste.iloc[[t]], X=X_t)
+
+    return {f"MAE_D+{h}": round(float(np.mean(v)), 2) if v else float("nan") for h, v in erros.items()}
+
+
+def bootstrap_prediction_interval_conjunto(
+    residuos_por_serie: dict,
+    previsao_por_serie: dict,
+    n_boot: int = 2000,
+    ci: float = 0.90,
+    random_state: int = 42,
+) -> dict:
+    """Intervalo de previsão por bootstrap para a SOMA de várias séries
+    (Pendência 8). Em vez de somar os limites de cada IC (que assume erros
+    perfeitamente correlacionados e infla o intervalo), sorteia o MESMO dia
+    para todas as séries em cada reamostragem, soma as trajetórias e só
+    então tira os percentis da distribuição da soma — preserva a
+    correlação real entre os resíduos de P2 e P3 no mesmo dia.
+
+    `residuos_por_serie` e `previsao_por_serie` são dicionários com as mesmas
+    chaves (ex.: 'P2', 'P3'). Os arrays de resíduos precisam ter o mesmo
+    tamanho e estar alinhados por data (mesma posição = mesmo dia).
+
+    Retorna, por série e para 'total', `ic_inferior`/`ic_superior` por
+    ponto, e `w_inferior`/`w_superior` (percentis da soma do período).
+    """
+    rng = np.random.default_rng(random_state)
+    chaves = list(previsao_por_serie.keys())
+    if set(chaves) != set(residuos_por_serie.keys()):
+        raise ValueError("residuos_por_serie e previsao_por_serie precisam ter as mesmas chaves.")
+
+    residuos = {k: np.asarray(residuos_por_serie[k], dtype=float) for k in chaves}
+    previsoes = {k: np.asarray(previsao_por_serie[k], dtype=float) for k in chaves}
+    n_res = {len(v) for v in residuos.values()}
+    if len(n_res) != 1:
+        raise ValueError(f"Resíduos com tamanhos diferentes entre séries: {n_res} — alinhe por data antes.")
+    n_res = n_res.pop()
+    horizonte = {len(v) for v in previsoes.values()}
+    if len(horizonte) != 1:
+        raise ValueError("Previsões com horizontes diferentes entre séries.")
+    horizonte = horizonte.pop()
+
+    alpha = (1 - ci) / 2
+    idx = rng.integers(0, n_res, size=(n_boot, horizonte))  # mesmo dia sorteado para todas as séries
+
+    trajetorias = {k: previsoes[k][np.newaxis, :] + residuos[k][idx] for k in chaves}
+    trajetorias["total"] = np.sum([trajetorias[k] for k in chaves], axis=0)
+
+    resultado = {}
+    for k, traj in trajetorias.items():
+        traj = np.maximum(traj, 0)
+        soma_periodo = traj.sum(axis=1)
+        resultado[k] = {
+            "ic_inferior": np.quantile(traj, alpha, axis=0),
+            "ic_superior": np.quantile(traj, 1 - alpha, axis=0),
+            "w_inferior": float(np.quantile(soma_periodo, alpha)),
+            "w_superior": float(np.quantile(soma_periodo, 1 - alpha)),
+        }
+    return resultado
+
+
+def taxa_violacao_historica_por_prioridade(
+    df_elegivel: pd.DataFrame,
+    prioridade_col: str = "Prioridade",
+    target_col: str = "target",
+    time_col: str | None = None,
+    semanas_recentes: int | None = None,
+) -> pd.Series:
+    """Taxa histórica de violação por prioridade, opcionalmente só sobre as
+    últimas `semanas_recentes` (por `time_col`). Insumo de
+    `projetar_ola_esperado` (Pendência 10). Usa só dado passado, então
+    dentro de um fold deve ser calculada no TREINO do fold.
+    """
+    df = df_elegivel
+    if semanas_recentes is not None:
+        if time_col is None:
+            raise ValueError("time_col é obrigatório quando semanas_recentes é informado.")
+        limite = pd.to_datetime(df[time_col]).max() - pd.Timedelta(weeks=semanas_recentes)
+        df = df[pd.to_datetime(df[time_col]) > limite]
+    return df.groupby(prioridade_col)[target_col].mean().rename("taxa_violacao")
+
+
+def projetar_ola_esperado(
+    previsao_por_prioridade: dict,
+    taxa_por_prioridade: dict | pd.Series,
+    ic_inferior_por_prioridade: dict | None = None,
+    ic_superior_por_prioridade: dict | None = None,
+) -> pd.DataFrame:
+    """Projeção de perda de OLA para D+1..D+h (Pendência 10): violações
+    esperadas por dia = volume previsto × taxa histórica de violação, por
+    prioridade, mais o total. Aproximação deliberadamente simples e
+    transparente — supõe taxa de violação estável no horizonte, o que deve
+    ser dito no notebook. Se os ICs de volume forem passados, projeta também
+    o cenário pessimista/otimista de violações.
+
+    Retorna um DataFrame com uma linha por dia do horizonte e colunas
+    `ola_esperado_<prioridade>` e `ola_esperado_total` (mais `_ic_inf`/`_ic_sup`
+    quando aplicável).
+    """
+    chaves = list(previsao_por_prioridade.keys())
+    taxa = dict(taxa_por_prioridade)
+    faltando = [k for k in chaves if k not in taxa]
+    if faltando:
+        raise ValueError(f"Sem taxa de violação para: {faltando}")
+
+    saida = pd.DataFrame(index=range(len(next(iter(previsao_por_prioridade.values())))))
+    for k in chaves:
+        saida[f"ola_esperado_{k}"] = np.asarray(previsao_por_prioridade[k], dtype=float) * float(taxa[k])
+        if ic_inferior_por_prioridade is not None:
+            saida[f"ola_esperado_{k}_ic_inf"] = np.asarray(ic_inferior_por_prioridade[k], dtype=float) * float(taxa[k])
+        if ic_superior_por_prioridade is not None:
+            saida[f"ola_esperado_{k}_ic_sup"] = np.asarray(ic_superior_por_prioridade[k], dtype=float) * float(taxa[k])
+
+    saida["ola_esperado_total"] = saida[[f"ola_esperado_{k}" for k in chaves]].sum(axis=1)
+    if ic_inferior_por_prioridade is not None:
+        saida["ola_esperado_total_ic_inf"] = saida[[f"ola_esperado_{k}_ic_inf" for k in chaves]].sum(axis=1)
+    if ic_superior_por_prioridade is not None:
+        saida["ola_esperado_total_ic_sup"] = saida[[f"ola_esperado_{k}_ic_sup" for k in chaves]].sum(axis=1)
+    return saida.round(3)
+
+
+# =====================================================================
+# 19. DESAFIO 3 — THRESHOLD ESCOLHIDO FORA DO CONJUNTO DE TESTE
+# =====================================================================
+
+def separar_validacao_temporal(
+    df: pd.DataFrame,
+    time_col: str,
+    frac_validacao: float = 0.2,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Divide um DataFrame em (sub_treino, sub_validacao) por TEMPO — os
+    últimos `frac_validacao` por ordem de `time_col` viram validação. É a
+    mesma regra já usada dentro de `otimizar_hiperparametros_catboost`,
+    agora exposta para reuso (calibração de threshold, eval_set).
+    """
+    df_ordenado = df.sort_values(time_col)
+    corte = int(len(df_ordenado) * (1 - frac_validacao))
+    return df_ordenado.iloc[:corte].copy(), df_ordenado.iloc[corte:].copy()
+
+
+def calibrar_threshold_fold(
+    df_treino_fold: pd.DataFrame,
+    target_col: str,
+    cat_features: list[str],
+    text_features: list[str] | None,
+    time_col: str,
+    params: dict,
+    custo_falso_positivo: float,
+    custo_falso_negativo: float,
+    frac_validacao: float = 0.2,
+    random_state: int = 42,
+) -> dict:
+    """Escolhe o threshold de decisão SEM olhar o conjunto de teste do fold
+    (Pendência 2): treina um CatBoost só no sub-treino temporal, pontua a
+    fatia de validação interna e aplica `calibrar_threshold_por_custo` ali.
+    O threshold devolvido é então aplicado, no notebook, ao escore do
+    modelo do fold no teste real — separando escolha de avaliação.
+
+    Se a validação interna não tiver nenhum positivo, levanta erro em vez
+    de devolver um threshold sem sentido.
+    """
+    sub_treino, sub_valid = separar_validacao_temporal(df_treino_fold, time_col, frac_validacao)
+    if sub_valid[target_col].sum() == 0:
+        raise ValueError("Fatia de validação interna sem positivos — aumente frac_validacao.")
+
+    ajuste = treinar_catboost_fold(
+        sub_treino, sub_valid, target_col=target_col, cat_features=cat_features,
+        text_features=text_features, params=params, time_col=time_col, random_state=random_state,
+    )
+    calibracao = calibrar_threshold_por_custo(
+        ajuste["y_true"], ajuste["y_score"], custo_falso_positivo, custo_falso_negativo,
+    )
+    calibracao["n_positivos_validacao"] = int(sub_valid[target_col].sum())
+    calibracao["n_validacao"] = int(len(sub_valid))
+    return calibracao
+
+
+def avaliar_threshold(y_true: np.ndarray, y_score: np.ndarray, threshold: float) -> dict:
+    """Precisão, recall, VP/FP/FN e volume de alertas de um threshold FIXO
+    aplicado a um conjunto — usado para reportar, no teste do fold, o
+    threshold escolhido na validação interna (nunca o inverso).
+    """
+    y_true = np.asarray(y_true).astype(int)
+    y_pred = (np.asarray(y_score) >= threshold).astype(int)
+    vp = int(((y_pred == 1) & (y_true == 1)).sum())
+    fp = int(((y_pred == 1) & (y_true == 0)).sum())
+    fn = int(((y_pred == 0) & (y_true == 1)).sum())
+    return {
+        "threshold": float(threshold),
+        "precisao": round(vp / (vp + fp), 4) if vp + fp else float("nan"),
+        "recall": round(vp / (vp + fn), 4) if vp + fn else float("nan"),
+        "vp": vp, "fp": fp, "fn": fn,
+        "n_alertas": int(y_pred.sum()),
+    }
+
+
+# =====================================================================
+# 20. DESAFIO 4 — EXPLICABILIDADE (SHAP) E LEITURA DESCRITIVA
+# =====================================================================
+# ATENÇÃO (sincronização): o notebook 06 já importava estas quatro funções
+# de uma versão do utils.py que existia SÓ no Drive e não chegou ao GitHub.
+# As versões abaixo foram reconstruídas a partir das assinaturas e das
+# saídas registradas no notebook 06 (mesmas colunas de retorno). Ao
+# sincronizar Drive -> GitHub, compare com a versão do Drive: se houver
+# diferença de comportamento, a do Drive foi a que gerou os outputs
+# existentes — mantenha-a e traga só as extensões marcadas (intervalo de
+# Wilson em `taxa_violacao_por_categoria`).
+
+def calcular_shap_values(
+    modelo,
+    X: pd.DataFrame,
+    cat_features: list[str],
+    text_features: list[str] | None = None,
+) -> tuple[np.ndarray, float]:
+    """SHAP values exatos (TreeExplainer nativo do CatBoost) para cada linha
+    de `X`. Retorna `(shap_values, valor_esperado)`: matriz (n, n_features)
+    em log-odds e o valor esperado (base) do modelo. A propriedade aditiva
+    (soma da linha + base == log-odds previsto) é checada no notebook.
+    """
+    from catboost import Pool
+
+    pool = Pool(X, cat_features=cat_features, text_features=text_features or [])
+    valores = modelo.get_feature_importance(type="ShapValues", data=pool)
+    valores = np.asarray(valores)
+    return valores[:, :-1], float(valores[0, -1])
+
+
+def ranquear_features_por_shap(
+    shap_values: np.ndarray,
+    nomes_features: list[str],
+    top_n: int = 15,
+) -> pd.DataFrame:
+    """Ranking global: |SHAP| médio (magnitude) e SHAP médio com sinal
+    (direção predominante), ordenado por magnitude."""
+    ranking = pd.DataFrame({
+        "feature": list(nomes_features),
+        "shap_importancia_media_abs": np.abs(shap_values).mean(axis=0),
+        "shap_media_com_sinal": shap_values.mean(axis=0),
+    })
+    return ranking.sort_values("shap_importancia_media_abs", ascending=False).head(top_n).reset_index(drop=True)
+
+
+def explicar_chamado_individual(
+    shap_values: np.ndarray,
+    nomes_features: list[str],
+    linha_X: pd.Series,
+    indice: int,
+    valor_esperado: float,
+    top_n: int = 10,
+) -> pd.DataFrame:
+    """Explicação local de UM chamado: as `top_n` features com maior
+    contribuição absoluta, o valor da feature naquele chamado, a
+    contribuição em log-odds e a direção ('para cima' / 'para baixo')."""
+    contribuicoes = np.asarray(shap_values[indice], dtype=float)
+    ordem = np.argsort(-np.abs(contribuicoes))[:top_n]
+    return pd.DataFrame({
+        "feature": [nomes_features[i] for i in ordem],
+        "valor_no_chamado": [linha_X.iloc[i] for i in ordem],
+        "contribuicao_shap": contribuicoes[ordem],
+        "empurra_risco": ["para cima" if c > 0 else "para baixo" for c in contribuicoes[ordem]],
+    })
+
+
+def intervalo_wilson(n_sucessos: np.ndarray, n_total: np.ndarray, z: float = 1.96) -> tuple[np.ndarray, np.ndarray]:
+    """Intervalo de Wilson para proporção — funciona bem mesmo com poucos
+    sucessos (o caso aqui: 1 ou 2 violações em 30 casos), diferente do
+    intervalo normal ingênuo, que fica negativo ou estreito demais."""
+    k = np.asarray(n_sucessos, dtype=float)
+    n = np.asarray(n_total, dtype=float)
+    p = np.divide(k, n, out=np.zeros_like(k), where=n > 0)
+    denom = 1 + z**2 / n
+    centro = (p + z**2 / (2 * n)) / denom
+    meia = z * np.sqrt(p * (1 - p) / n + z**2 / (4 * n**2)) / denom
+    return np.clip(centro - meia, 0, 1), np.clip(centro + meia, 0, 1)
+
+
+def taxa_violacao_por_categoria(
+    df: pd.DataFrame,
+    coluna: str,
+    target_col: str,
+    min_casos: int = 30,
+    top_n: int = 15,
+    ordenar_por: str = "taxa_violacao_pct",
+) -> pd.DataFrame:
+    """Taxa de violação OBSERVADA por valor de `coluna` (template de
+    descrição, equipe, produto...), só para valores com pelo menos
+    `min_casos` chamados. Colunas de retorno: `coluna`, `n_casos`,
+    `n_violacoes`, `taxa_violacao_pct` — e, extensão da revisão de 06/09
+    (Pendência 5), `ic_inferior_pct`/`ic_superior_pct` (Wilson 95%).
+
+    Por que o intervalo importa: com taxa base ~1%, "2 em 30" (6,7%) tem
+    IC de ~1% a ~22% — indistinguível da média geral. `ordenar_por=
+    'ic_inferior_pct'` ranqueia pelo limite inferior, que penaliza amostra
+    pequena e é a leitura defensável para "quais tipos mais estouram".
+    """
+    agrupado = (
+        df.groupby(coluna, dropna=True)[target_col]
+        .agg(n_casos="count", n_violacoes="sum")
+        .reset_index()
+    )
+    agrupado = agrupado[agrupado["n_casos"] >= min_casos].copy()
+    agrupado["taxa_violacao_pct"] = (agrupado["n_violacoes"] / agrupado["n_casos"] * 100).round(2)
+    inf, sup = intervalo_wilson(agrupado["n_violacoes"].values, agrupado["n_casos"].values)
+    agrupado["ic_inferior_pct"] = (inf * 100).round(2)
+    agrupado["ic_superior_pct"] = (sup * 100).round(2)
+    if ordenar_por not in agrupado.columns:
+        raise ValueError(f"ordenar_por inválido: {ordenar_por}")
+    return agrupado.sort_values(ordenar_por, ascending=False).head(top_n).reset_index(drop=True)
+
+
+def top_razoes_por_chamado(shap_values: np.ndarray, nomes_features: list[str], indice: int, top_n: int = 3) -> str:
+    """Resumo textual das `top_n` razões de um chamado ('feature (+); ...'),
+    formato consumido pelo painel operacional (`painel_risco_explicado.csv`).
+    Movida do notebook 06 para aqui para poder ser testada."""
+    contribuicoes = np.asarray(shap_values[indice], dtype=float)
+    ordem = np.argsort(np.abs(contribuicoes))[::-1][:top_n]
+    return "; ".join(f"{nomes_features[i]} ({'+' if contribuicoes[i] > 0 else '-'})" for i in ordem)
 
 
 # =====================================================================
