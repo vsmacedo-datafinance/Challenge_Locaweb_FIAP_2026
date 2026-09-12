@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0a0c11;
+  --bg2: #0e1119;
+  --panel: #121620;
+  --line: #1f2430;
+  --red: #f5233c;
+  --red-soft: rgba(245, 35, 60, 0.13);
+  --cyan: #45e0e6;
+  --cyan-soft: rgba(69, 224, 230, 0.11);
+  --amber: #f5a623;
+  --amber-soft: rgba(245, 166, 35, 0.13);
+  --txt: #edeff4;
+  --mut: #98a0b3;
+  --mut2: #5f6779;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--bg);
+  color: var(--txt);
+  -webkit-font-smoothing: antialiased;
+}
+
+svg text {
+  fill: var(--mut2);
+}
